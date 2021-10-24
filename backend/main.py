@@ -49,11 +49,12 @@ class Reservations(Resource):
         #check if seat is free at given time
         post_data_validation.abort_if_unavailable(args, Reservation.query.all())
 
-        #add reservation to database
+        #create new reservation and add it to database
         reservation = Reservation(date=args.date, duration=args.duration, seatNumber=args.seatNumber, fullName=args.fullName, phone=args.phone, email=args.email, numberOfSeats=args.numberOfSeats)
-        
         db.session.add(reservation)
         db.session.commit()
+        
+        #send email about new reservation
         email_sender.new_res(reservation)
         
         return {"reservationId": str(reservation.id)}, 201
@@ -67,7 +68,9 @@ class Reservations(Resource):
         
         reservations=Reservation.query.all()
         
+        #check for date format, True if hour given false if just date
         hourGiven = get_data_validation.abort_if_wrong_date_format(args.date)
+        
         output=[]
         for reservation in reservations:
             #if hour given return reservations that start after this time on given day
@@ -82,29 +85,36 @@ class Reservations(Resource):
 #/reservations/id endpoint 
 class ReservationsId(Resource):
     def put(self, reservation_id):
+        #parse json from request
         parser = reqparse.RequestParser()
         parser.add_argument("status", type=str, required=True, help="Action status is required")
         args=parser.parse_args()
+        
         #validate json
         if args.status!="requested cancelation":
             abort(400, message="Invalid status")
         reservation=Reservation.query.filter_by(id=reservation_id).first()
         if reservation is None:
             abort(404, description="Reservation not found...")
+        #check if reservation starts in more than 2 hours
         if time_functions.less_than_two_hours(reservation.date):
             abort(405, description="You cannot delete this reservation anymore...")
-            
+        
+        #generate cancelation key if it doesnt already exist    
         if reservation.cancelationKey is None:
             reservation.cancelationKey=functions.generateKey()
         
-        
+        #add changes to database
         db.session.add(reservation)
         db.session.commit()
-        #send email
+        
+        #send email about cancelation request
         email_sender.request_cancelation(reservation)
+        
         return Response(status=200)
     
     def delete(self, reservation_id):
+        #parse json from request, its different since you cant pass json through delete request
         args=request.json
         if args is None:
             abort(400, description="Cannot read json")
@@ -117,9 +127,11 @@ class ReservationsId(Resource):
         if reservation is None:
             abort(404, message="Reservation not found...")
         
+        #check if reservation starts in less then 2 hours
         if time_functions.less_than_two_hours(reservation.date):
             abort(405, description="You cannot delete this reservation anymore...")
         
+        #if cancelation key is correct-> delete reservation and send email
         if reservation.cancelationKey==int(args["varificationCode"]):
             email_sender.confirm_cancelation(reservation)
             db.session.delete(reservation)
@@ -129,6 +141,7 @@ class ReservationsId(Resource):
     
 class Tables(Resource):
     def get(self):
+        #parse json from request
         parser = reqparse.RequestParser()
         parser.add_argument("status", type=str, required=True, help="Table status is required")
         parser.add_argument("min_seats", type=int, required=True, help="Number of seats is required")
@@ -136,6 +149,7 @@ class Tables(Resource):
         parser.add_argument("duration", type=str, required=True, help="Duration in minutes is required")
         args = parser.parse_args()
         
+        #check if status is correct and date is in correct format
         if args.status not in ("free", "taken", "all"):
             abort(400, description="Wrong status...")
         
@@ -143,21 +157,24 @@ class Tables(Resource):
         if not resdt:
             abort(400, description="Invalid date format...")
         
-        #get all seats with min_seats
-        #check if seat collides with reservations
+        
         reservations=Reservation.query.all()
+        
+        #generate list of all taken seats numbers at given date
         taken=table_functions.get_taken_seats_number(reservations, args)
         
         if args.status == "taken":
             return {"tables": table_functions.get_seats_from_list(taken)}
+        #generate list of all seats that have enough seats
         all=table_functions.get_seats_for_x_people(args.min_seats)
         if args.status == "free":
+            #generate list of seat numbers that are free
             free=[x for x in all if x not in taken]
             return {"tables": table_functions.get_seats_from_list(free)}
         if args.status=="all":
             return {"tables": table_functions.get_seats_from_list(all)}
         
-           
+#create endpoints
 api.add_resource(Reservations, "/reservations")
 api.add_resource(ReservationsId, "/reservations/<int:reservation_id>")
 api.add_resource(Tables, "/tables")
