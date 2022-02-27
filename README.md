@@ -1,3 +1,7 @@
+Zrobione zostało zadanie backend przy użyciu Flask.
+
+
+
 <div align="center">
 <img src="./assets/logo_solvro.png" height="200">
 </div>
